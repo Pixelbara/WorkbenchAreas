@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using HarmonyLib;
 using RimWorld;
 using UnityEngine;
@@ -16,7 +17,7 @@ namespace WorkbenchAreas
             {
                 var harmony = new Harmony("pixelbara.workbenchareas");
 
-                // 1. Context patch: store active Bill during ingredient search
+                // 1. Context patch: store active Area during ingredient search
                 var methodTryFind = AccessTools.Method(typeof(WorkGiver_DoBill), "TryFindBestBillIngredients");
                 if (methodTryFind != null)
                 {
@@ -47,6 +48,17 @@ namespace WorkbenchAreas
                     harmony.Patch(methodUI, postfix: new HarmonyMethod(typeof(Patch_Dialog_BillConfig), nameof(Patch_Dialog_BillConfig.Postfix)));
                 }
 
+                // 4. Persistence patch: Save and Load area associations inside Bill.ExposeData
+                var methodExposeData = AccessTools.Method(typeof(Bill), nameof(Bill.ExposeData));
+                if (methodExposeData != null)
+                {
+                    harmony.Patch(methodExposeData, postfix: new HarmonyMethod(typeof(Patch_Bill_ExposeData), nameof(Patch_Bill_ExposeData.Postfix)));
+                }
+                else
+                {
+                    Log.Error("[WorkbenchAreas] Could not find target method Bill.ExposeData!");
+                }
+
                 Log.Message("[WorkbenchAreas] Successfully initialized!");
             }
             catch (Exception ex)
@@ -69,12 +81,36 @@ namespace WorkbenchAreas
     public static class BillAreaData
     {
         public static Dictionary<Bill, Area> targetAreas = new Dictionary<Bill, Area>();
-        public static Bill CurrentEvaluatingBill = null;
+
+        // Cache the area here to achieve O(1) direct reads per item during search
+        public static Area CurrentEvaluatingArea = null;
 
         public static Area GetTargetArea(this Bill bill)
         {
             if (bill != null && targetAreas.TryGetValue(bill, out var area))
+            {
+                if (area != null && bill.Map != null)
+                {
+                    // Validate if the area still exists and belongs to the same map
+                    if (area.Map != bill.Map || !bill.Map.areaManager.AllAreas.Contains(area))
+                    {
+                        // Try to reassign by matching the area label on the new/current map
+                        Area matchingArea = bill.Map.areaManager.AllAreas.FirstOrDefault(a => a.Label == area.Label);
+
+                        if (matchingArea != null)
+                        {
+                            targetAreas[bill] = matchingArea;
+                            return matchingArea;
+                        }
+                        else
+                        {
+                            targetAreas.Remove(bill);
+                            return null;
+                        }
+                    }
+                }
                 return area;
+            }
             return null;
         }
 
@@ -89,17 +125,43 @@ namespace WorkbenchAreas
         }
     }
 
-    // Set active bill context during ingredient search
+    // Save/Load patch for individual Bills
+    public static class Patch_Bill_ExposeData
+    {
+        public static void Postfix(Bill __instance)
+        {
+            if (__instance == null) return;
+
+            Area area = __instance.GetTargetArea();
+
+            // Scribe_References saves the unique LoadID of the Area object and resolves it on load
+            Scribe_References.Look(ref area, "workbenchTargetArea");
+
+            if (Scribe.mode == LoadSaveMode.ResolvingCrossRefs || Scribe.mode == LoadSaveMode.PostLoadInit)
+            {
+                if (area != null)
+                {
+                    BillAreaData.targetAreas[__instance] = area;
+                }
+                else
+                {
+                    BillAreaData.targetAreas.Remove(__instance);
+                }
+            }
+        }
+    }
+
+    // Cache the area before the search starts to save TPS
     public static class Patch_TryFindBestBillIngredients
     {
         public static void Prefix(Bill bill)
         {
-            BillAreaData.CurrentEvaluatingBill = bill;
+            BillAreaData.CurrentEvaluatingArea = bill.GetTargetArea();
         }
 
         public static void Finalizer()
         {
-            BillAreaData.CurrentEvaluatingBill = null;
+            BillAreaData.CurrentEvaluatingArea = null;
         }
     }
 
@@ -110,18 +172,15 @@ namespace WorkbenchAreas
         {
             if (!__result || t == null) return;
 
-            Bill activeBill = BillAreaData.CurrentEvaluatingBill;
-            if (activeBill != null)
+            // Direct static field read instead of dictionary lookup (maximizes TPS)
+            Area targetArea = BillAreaData.CurrentEvaluatingArea;
+
+            if (targetArea != null)
             {
-                Area targetArea = activeBill.GetTargetArea();
-                if (targetArea != null)
+                // Check if the item's position falls within the target Area grid
+                if (!targetArea[t.PositionHeld])
                 {
-                    // Check if the item's position falls within the target Area grid
-                    IntVec3 pos = t.PositionHeld;
-                    if (!targetArea[pos])
-                    {
-                        __result = false;
-                    }
+                    __result = false;
                 }
             }
         }
@@ -145,8 +204,8 @@ namespace WorkbenchAreas
 
             Area currentArea = bill.GetTargetArea();
 
-            string defaultLabel = TranslationHelper.TranslateWithFallback("WorkbenchAreas.AllAreas", "All Areas (Default)");
-            string labelPrefix = TranslationHelper.TranslateWithFallback("WorkbenchAreas.TargetArea", "Area: ");
+            string defaultLabel = TranslationHelper.TranslateWithFallback("WorkbenchAreas.AllAreas", "All areas (default)");
+            string labelPrefix = TranslationHelper.TranslateWithFallback("WorkbenchAreas.TargetArea", "Target area: ");
 
             string currentLabel = currentArea != null ? currentArea.Label : defaultLabel;
 
