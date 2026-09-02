@@ -1,0 +1,15 @@
+# Build outputs
+bin/
+obj/
+*.user
+*.suo
+
+# IDE configuration
+.vs/
+.idea/
+.vscode/
+
+# Block all DLLs by default, but allow mod assemblies
+*.dll
+!Assemblies/
+!Assemblies/*.dll
