@@ -3,10 +3,15 @@
   <name>Workbench Areas</name>
   <author>pixelbara</author>
   <packageId>pixelbara.workbenchareas</packageId>
+  <url>https://github.com/pixelbara/WorkbenchAreas</url>
   <supportedVersions>
     <li>1.6</li>
   </supportedVersions>
-  <description>Allows restricting ingredient searching for any workbench or crematorium bill to specific allowed areas (including Home area and custom player areas). Placed directly inside the bill config window under the search radius slider.</description>
+  <description>Allows restricting ingredient search for workbenches and crematoriums to specific allowed areas. Placed inside the bill config window. Safe mid-game. (Created with AI assistance).
+
+[RU] Ограничивает поиск ингредиентов для верстаков и крематориев выбранными зонами. Встроено в окно настройки задачи. Безопасно для сохранений. (Создано с участием ИИ).
+
+[ZH] 将工作台和焚化炉清单的原料搜索限制 inside 指定区域。支持中途加卸载。（包含AI辅助内容）。</description>
   <modDependencies>
     <li>
       <packageId>brrainz.harmony</packageId>
